@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Thailand Drone Map Pro (V.5 Smart Name Fix)</title>
+    <title>Thailand Drone Map Pro (V.6 Final Fix)</title>
 
     <!-- Leaflet & Plugins -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -85,7 +85,7 @@
             </div>
             
             <div class="text-[10px] text-gray-400 mt-2 italic text-center">
-                ระบบตรวจสอบชื่อ: Smart Property Detection Active
+                ระบบตรวจสอบพื้นที่: พร้อมใช้งาน (Flattened Layers)
             </div>
         </div>
         
@@ -129,34 +129,24 @@
     });
     map.addControl(drawControl);
 
-    // --- SMART HELPER FUNCTION: Get Name Safely (V5) ---
-    // ฟังก์ชันนี้จะพยายามหา Key ที่น่าจะเป็นชื่อให้เจอ ไม่ว่ามันจะเขียนว่า name_th, Name, NAME_TH หรืออื่นๆ
+    // --- Smart Feature Name Extraction ---
     function getFeatureName(props) {
         if (!props) return "ไม่ระบุชื่อ";
-
-        // 1. ลองหาตรงๆ ตามที่คุณบอกมาก่อน (Priority สูงสุด)
+        // Prioritize name_th as requested
         if (props.name_th) return props.name_th;
         if (props.NAME_TH) return props.NAME_TH;
-        if (props.Name_th) return props.Name_th;
+        if (props.Name) return props.Name;
+        if (props.name) return props.name;
 
-        // 2. ถ้าไม่เจอ ให้วนลูปหาทุก key ที่มีคำว่า "name" หรือ "ชื่อ"
+        // Fallback: Search for any key containing 'name' or 'ชื่อ'
         const keys = Object.keys(props);
         for (let key of keys) {
             const lowerKey = key.toLowerCase();
-            if (lowerKey.includes('name') || lowerKey.includes('ชื่อ')) {
-                // ตรวจสอบว่าค่าข้างในไม่ใช่ค่าว่าง
-                if (props[key] && typeof props[key] === 'string' && props[key].trim() !== "") {
-                    return props[key];
-                }
+            if ((lowerKey.includes('name') || lowerKey.includes('ชื่อ')) && props[key]) {
+                return props[key];
             }
         }
-
-        // 3. ถ้ายังไม่เจอ ลองหา Key ภาษาไทยยอดฮิต
-        if (props['ชื่อสถานที่']) return props['ชื่อสถานที่'];
-        
-        // 4. Fallback
-        console.log("หาชื่อไม่เจอใน Properties นี้:", props);
-        return "ไม่ระบุชื่อ (ตรวจสอบ Console)";
+        return "ไม่ระบุชื่อ";
     }
 
     async function loadLayerData(url, layerGroup, style, statusId, typeName) {
@@ -166,17 +156,22 @@
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             
             const data = await response.json();
-            
-            const geoJsonLayer = L.geoJSON(data, {
+            layerGroup.clearLayers();
+
+            // --- KEY FIX HERE ---
+            // แทนที่จะสร้าง L.geoJSON ก้อนเดียว เราใช้มันเพื่อ parse และดึง Layer ย่อยออกมา
+            // แล้ว add เข้า layerGroup โดยตรง เพื่อให้ checkOverlap เข้าถึงได้ง่าย
+            L.geoJSON(data, {
                 style: style,
                 onEachFeature: (feature, layer) => {
                     const name = getFeatureName(feature.properties);
                     layer.bindPopup(`<div class="text-center font-sarabun"><b>${typeName}</b><br><span class="text-lg font-bold text-blue-600">${name}</span></div>`);
+                    
+                    // เพิ่ม Layer ย่อยเข้าสู่ Group หลักโดยตรง (Flattening)
+                    layerGroup.addLayer(layer);
                 }
             });
             
-            layerGroup.clearLayers();
-            layerGroup.addLayer(geoJsonLayer);
             statusEl.className = 'status-dot status-success';
             statusEl.title = "โหลดข้อมูลสำเร็จ";
 
@@ -220,13 +215,14 @@
         function scanGroup(group, typeName) {
             group.eachLayer(l => {
                 let targetGeo;
-                // ดึง GeoJSON และ Properties อย่างระมัดระวัง
+                
+                // ดึง Geometry
                 if (l.toGeoJSON) targetGeo = l.toGeoJSON();
                 if (l instanceof L.Circle) {
                      targetGeo = turf.circle([l.getLatLng().lng, l.getLatLng().lat], l.getRadius(), {steps: 20, units: 'meters'});
                 }
 
-                // สำคัญ: ต้องแน่ใจว่า Properties ติดมากับ targetGeo
+                // สำคัญ: ตรวจสอบและโอนถ่าย Properties เพื่อให้ getFeatureName ทำงานได้
                 if (l.feature && l.feature.properties) {
                     targetGeo.properties = l.feature.properties;
                 }
@@ -238,8 +234,7 @@
                 } catch(e) {}
 
                 if (isHit) {
-                    // ใช้ฟังก์ชันอัจฉริยะตัวเดิม
-                    const name = getFeatureName(targetGeo.properties || l.feature?.properties); 
+                    const name = getFeatureName(targetGeo.properties); 
                     alerts.push(`<b>${typeName}:</b> ${name}`);
                 }
             });
