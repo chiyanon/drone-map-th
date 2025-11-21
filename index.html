@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Thailand Drone Map Pro (V.7 No Duplicates)</title>
+    <title>Thailand Drone Map Pro (V.8 Strict Unique)</title>
 
     <!-- Leaflet & Plugins -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -85,7 +85,7 @@
             </div>
             
             <div class="text-[10px] text-gray-400 mt-2 italic text-center">
-                แก้ไข: ลบรายการชื่อซ้ำ (Deduplicated Alerts)
+                System Status: V.8 Enhanced Deduplication
             </div>
         </div>
         
@@ -129,20 +129,31 @@
     });
     map.addControl(drawControl);
 
-    // --- Smart Feature Name Extraction ---
+    // --- V8: Aggressive Name Cleaning ---
     function getFeatureName(props) {
         if (!props) return "ไม่ระบุชื่อ";
-        if (props.name_th) return props.name_th;
-        if (props.NAME_TH) return props.NAME_TH;
-        if (props.Name) return props.Name;
-        if (props.name) return props.name;
-
-        const keys = Object.keys(props);
-        for (let key of keys) {
-            const lowerKey = key.toLowerCase();
-            if ((lowerKey.includes('name') || lowerKey.includes('ชื่อ')) && props[key]) {
-                return props[key];
+        
+        let rawName = null;
+        if (props.name_th) rawName = props.name_th;
+        else if (props.NAME_TH) rawName = props.NAME_TH;
+        else if (props.Name) rawName = props.Name;
+        else if (props.name) rawName = props.name;
+        
+        if (!rawName) {
+             // Search keys
+            const keys = Object.keys(props);
+            for (let key of keys) {
+                const lowerKey = key.toLowerCase();
+                if ((lowerKey.includes('name') || lowerKey.includes('ชื่อ')) && props[key]) {
+                    rawName = props[key];
+                    break;
+                }
             }
+        }
+        
+        // Clean it up!
+        if (rawName) {
+            return String(rawName).trim().replace(/\s+/g, ' ');
         }
         return "ไม่ระบุชื่อ";
     }
@@ -203,20 +214,17 @@
         checkOverlap(geoJson, "พื้นที่วาดใหม่");
     });
 
-    // --- FIXED: Deduplicated Check Overlap ---
+    // --- V8: Strict Deduplication ---
     function checkOverlap(userGeo, sourceName) {
-        // 1. ใช้ Set แทน Array เพื่อป้องกันข้อมูลซ้ำ
         let alerts = new Set(); 
 
         function scanGroup(group, typeName) {
             group.eachLayer(l => {
                 let targetGeo;
-                
                 if (l.toGeoJSON) targetGeo = l.toGeoJSON();
                 if (l instanceof L.Circle) {
                      targetGeo = turf.circle([l.getLatLng().lng, l.getLatLng().lat], l.getRadius(), {steps: 20, units: 'meters'});
                 }
-
                 if (l.feature && l.feature.properties) {
                     targetGeo.properties = l.feature.properties;
                 }
@@ -228,9 +236,16 @@
                 } catch(e) {}
 
                 if (isHit) {
+                    // ใช้ฟังก์ชันทำความสะอาดชื่อที่เข้มงวดขึ้น
                     const name = getFeatureName(targetGeo.properties); 
-                    // 2. เพิ่มข้อมูลลงใน Set (ถ้ามีสตริงนี้อยู่แล้ว มันจะไม่เพิ่มซ้ำ)
-                    alerts.add(`<b>${typeName}:</b> ${name}`);
+                    
+                    // สร้าง Key ที่ไม่ซ้ำแน่นอน
+                    const alertString = `<b>${typeName}:</b> ${name}`;
+                    
+                    if (!alerts.has(alertString)) {
+                        alerts.add(alertString);
+                        console.log(`Hit Detected: ${name}`); // Debug Log
+                    }
                 }
             });
         }
@@ -238,11 +253,9 @@
         if (document.getElementById('toggleNFZ').checked) scanGroup(nfzLayerGroup, "เขตห้ามบิน (NFZ)");
         if (document.getElementById('togglePark').checked) scanGroup(parkLayerGroup, "อุทยานแห่งชาติ");
 
-        // 3. ตรวจสอบขนาดของ Set
         if (alerts.size > 0) {
             Swal.fire({
                 title: '⚠️ เตือนพื้นที่ทับซ้อน!',
-                // 4. แปลง Set กลับเป็น Array เพื่อนำมาแสดงผล
                 html: `<div class="text-left text-sm"><b>"${sourceName}"</b> อยู่ในพื้นที่:<br><ul class="list-disc pl-5 text-red-600 mt-2 font-bold">${Array.from(alerts).map(a => `<li>${a}</li>`).join('')}</ul></div>`,
                 icon: 'warning',
                 confirmButtonColor: '#d33'
