@@ -1,0 +1,38 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "Suvarnabhumi Airport", "radius_km": 9 },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [100.833, 13.690], [100.666, 13.690], [100.666, 13.590], [100.833, 13.590], [100.833, 13.690]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Don Mueang Airport", "radius_km": 9 },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [100.6042, 13.9125]
+      }
+    }
+  ]
+}
+```
+*(หมายเหตุ: หากคุณมีไฟล์ NFZ ฉบับเต็ม ให้ใช้วิธีเดียวกับข้อ 1.1 แปลงเป็น GeoJSON แล้วตั้งชื่อว่า `nfz.json` แทนไฟล์ตัวอย่างนี้)*
+
+---
+
+#### ขั้นตอนที่ 2: จัดโครงสร้างโฟลเดอร์
+
+สร้างโฟลเดอร์ใหม่ในคอมพิวเตอร์ของคุณ (เช่นชื่อ `my-drone-map`) และจัดเรียงไฟล์ข้างในให้เป็นแบบนี้ **เป๊ะๆ** ครับ:
+
+```
+my-drone-map/
+├── index.html       (โค้ด HTML ที่ผมให้ไปด้านบน)
+└── data/            (สร้างโฟลเดอร์ชื่อ data)
+    ├── parks.json   (ไฟล์อุทยานที่คุณแปลงมา)
+    └── nfz.json     (ไฟล์ No Fly Zone)

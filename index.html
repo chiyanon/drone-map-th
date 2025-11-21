@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Thailand Drone Map Pro (Static Data)</title>
+
+    <!-- Leaflet & Plugins -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        body, html { height: 100%; width: 100%; margin: 0; overflow: hidden; font-family: 'Sarabun', sans-serif; }
+        #app-container { display: flex; height: 100vh; width: 100vw; }
+        #sidebar { width: 350px; background: white; box-shadow: 2px 0 10px rgba(0,0,0,0.1); z-index: 1001; display: flex; flex-direction: column; transition: transform 0.3s ease; flex-shrink: 0; }
+        #map { flex-grow: 1; height: 100%; z-index: 1; }
+        #searchResults { max-height: 200px; overflow-y: auto; border: 1px solid #eee; border-radius: 0 0 8px 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); background: white; position: absolute; width: 92%; z-index: 2000; display: none; }
+        .search-item { padding: 10px; cursor: pointer; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+        .search-item:hover { background-color: #f0f9ff; color: #0284c7; }
+        @media (max-width: 768px) {
+            #app-container { flex-direction: column-reverse; }
+            #sidebar { width: 100%; height: 45%; border-radius: 20px 20px 0 0; box-shadow: 0 -2px 10px rgba(0,0,0,0.1); }
+            #map { height: 55%; }
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+        /* Status Indicators */
+        .status-dot { height: 8px; width: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+        .status-loading { background-color: #f59e0b; animation: pulse 1s infinite; }
+        .status-success { background-color: #22c55e; }
+        .status-error { background-color: #ef4444; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+<div id="app-container">
+    <!-- SIDEBAR -->
+    <div id="sidebar" class="p-4 bg-white relative">
+        <div class="mb-4 flex items-center justify-between">
+            <h1 class="text-xl font-bold text-slate-800"><i class="fas fa-map-marked-alt text-blue-600"></i> Drone Map TH</h1>
+            <button onclick="locateUser()" class="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200" title="ตำแหน่งปัจจุบัน">
+                <i class="fas fa-crosshairs"></i>
+            </button>
+        </div>
+
+        <!-- Search Box -->
+        <div class="relative mb-4 group">
+            <label class="block text-xs font-semibold text-gray-500 mb-1">ค้นหาสถานที่ / พิกัด</label>
+            <div class="flex gap-2">
+                <input type="text" id="searchInput" placeholder="พิมพ์ชื่อสถานที่..." class="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:border-blue-500 text-sm" autocomplete="off">
+                <button onclick="manualSearch()" class="bg-blue-600 text-white px-3 rounded-md hover:bg-blue-700"><i class="fas fa-search"></i></button>
+            </div>
+            <div id="searchResults"></div>
+        </div>
+
+        <!-- Layer Controls -->
+        <div class="flex-1 overflow-y-auto pr-2 space-y-4">
+            <div class="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <h3 class="font-bold text-sm text-gray-700 mb-2 border-b pb-1">ชั้นข้อมูล (Layers)</h3>
+                
+                <!-- NFZ Toggle -->
+                <div class="flex items-center justify-between mb-2">
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" id="toggleNFZ" checked onchange="toggleLayer('nfz')" class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500">
+                        <span class="ml-2 text-sm text-gray-700">No Fly Zone</span>
+                    </label>
+                    <div class="flex items-center">
+                        <span id="status-nfz" class="status-dot status-loading" title="กำลังโหลด..."></span>
+                        <div class="w-3 h-3 rounded-full bg-red-500 opacity-50 border border-red-700"></div>
+                    </div>
+                </div>
+
+                <!-- Parks Toggle -->
+                <div class="flex items-center justify-between">
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" id="togglePark" checked onchange="toggleLayer('park')" class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500">
+                        <span class="ml-2 text-sm text-gray-700">อุทยานแห่งชาติ</span>
+                    </label>
+                    <div class="flex items-center">
+                        <span id="status-park" class="status-dot status-loading" title="กำลังโหลด..."></span>
+                        <div class="w-3 h-3 rounded-full bg-green-500 opacity-50 border border-green-700"></div>
+                    </div>
+                </div>
+                
+                <div class="mt-2 text-[10px] text-gray-400 italic">
+                    * สถานะ: <span class="text-green-600">● พร้อมใช้งาน</span> <span class="text-amber-500">● กำลังโหลด</span> <span class="text-red-500">● ไม่พบไฟล์</span>
+                </div>
+            </div>
+
+            <div class="text-xs text-gray-500 mt-4 p-2 bg-yellow-50 border border-yellow-100 rounded">
+                <p class="mb-1"><i class="fas fa-info-circle"></i> <b>การโหลดข้อมูล:</b><br>ระบบจะดึงไฟล์ <code>data/nfz.json</code> และ <code>data/parks.json</code> จาก GitHub อัตโนมัติ</p>
+            </div>
+        </div>
+        
+        <div class="mt-auto pt-2 border-t text-xs text-gray-400 font-mono flex justify-between">
+            <span id="mouse-coords">Lat: -, Lon: -</span>
+            <span>Zoom: <span id="zoom-level">-</span></span>
+        </div>
+    </div>
+
+    <!-- MAP -->
+    <div id="map"></div>
+</div>
+
+<!-- Libraries -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+<script src="https://unpkg.com/@turf/turf/turf.min.js"></script>
+
+<script>
+    // --- 1. Map Setup ---
+    const map = L.map('map', { zoomControl: false }).setView([13.7563, 100.5018], 6);
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' });
+    const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: '© Esri' });
+    osm.addTo(map);
+    L.control.layers({ "แผนที่ถนน": osm, "แผนที่ดาวเทียม": satellite }, null, { position: 'bottomright' }).addTo(map);
+
+    // --- 2. Layers & Styles ---
+    const drawnItems = new L.FeatureGroup().addTo(map);
+    const nfzLayerGroup = new L.FeatureGroup().addTo(map);
+    const parkLayerGroup = new L.FeatureGroup().addTo(map);
+
+    const styles = {
+        nfz: { color: '#dc2626', weight: 1, fillOpacity: 0.3, fillColor: '#ef4444' },
+        park: { color: '#16a34a', weight: 1, fillOpacity: 0.3, fillColor: '#22c55e' }
+    };
+
+    // --- 3. Draw Controls ---
+    const drawControl = new L.Control.Draw({
+        position: 'topright',
+        draw: { marker: true, polyline: true, polygon: { allowIntersection: false, showArea: true }, circle: true, rectangle: false, circlemarker: false },
+        edit: { featureGroup: drawnItems, remove: true }
+    });
+    map.addControl(drawControl);
+
+    // --- 4. Data Loading Logic (FETCH) ---
+    
+    async function loadLayerData(url, layerGroup, style, statusId, typeName) {
+        const statusEl = document.getElementById(statusId);
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            
+            const data = await response.json();
+            
+            const geoJsonLayer = L.geoJSON(data, {
+                style: style,
+                onEachFeature: (feature, layer) => {
+                    const name = feature.properties.name || feature.properties.Name || "ไม่ระบุชื่อ";
+                    layer.bindPopup(`<b>${typeName}</b><br>${name}`);
+                }
+            });
+            
+            layerGroup.clearLayers();
+            layerGroup.addLayer(geoJsonLayer);
+            
+            statusEl.className = 'status-dot status-success';
+            statusEl.title = "โหลดข้อมูลสำเร็จ";
+            console.log(`${typeName} Loaded.`);
+
+        } catch (error) {
+            console.error(`Failed to load ${typeName}:`, error);
+            statusEl.className = 'status-dot status-error';
+            statusEl.title = "ไม่พบไฟล์ข้อมูล (ตรวจสอบ Folder 'data')";
+            
+            // Fallback for NFZ: If file missing, load demo airports so app isn't empty
+            if (typeName === 'No Fly Zone') loadFallbackNFZ();
+        }
+    }
+
+    // Load both layers on startup
+    loadLayerData('data/nfz.json', nfzLayerGroup, styles.nfz, 'status-nfz', 'No Fly Zone');
+    loadLayerData('data/parks.json', parkLayerGroup, styles.park, 'status-park', 'National Park');
+
+    // Fallback Data (In case user hasn't uploaded json yet)
+    function loadFallbackNFZ() {
+        console.log("Loading Fallback NFZ data...");
+        const airports = [
+            {name: "Suvarnabhumi Airport", lat: 13.6900, lon: 100.7501},
+            {name: "Don Mueang Airport", lat: 13.9125, lon: 100.6042},
+            {name: "Chiang Mai Airport", lat: 18.7677, lon: 98.9640},
+            {name: "Phuket Airport", lat: 8.1132, lon: 98.3169}
+        ];
+        airports.forEach(apt => {
+            const circle = L.circle([apt.lat, apt.lon], { radius: 9000, ...styles.nfz });
+            circle.feature = { type: "Feature", properties: { name: apt.name }, geometry: { type: "Polygon" } };
+            circle.bindPopup(`<b>No Fly Zone (Demo)</b><br>${apt.name}`);
+            nfzLayerGroup.addLayer(circle);
+        });
+    }
+
+    // --- 5. Overlap & Interaction Logic (Same as before) ---
+    map.on(L.Draw.Event.CREATED, function (e) {
+        const layer = e.layer;
+        drawnItems.addLayer(layer);
+        let geoJson = layer.toGeoJSON();
+        if (e.layerType === 'circle') {
+            const center = layer.getLatLng();
+            const radius = layer.getRadius();
+            geoJson = turf.circle([center.lng, center.lat], radius, {steps: 64, units: 'meters'});
+        }
+        checkOverlap(geoJson, "พื้นที่วาดใหม่");
+    });
+
+    function checkOverlap(userGeo, sourceName) {
+        let alerts = [];
+        function scanGroup(group, typeName) {
+            group.eachLayer(l => {
+                // Handle both GeoJSON layers and manually added Circles
+                let targetGeo;
+                if (l.toGeoJSON) targetGeo = l.toGeoJSON(); // Most layers
+                
+                // If it's a circle (from manual add), convert to polygon for turf
+                if (l instanceof L.Circle) {
+                     targetGeo = turf.circle([l.getLatLng().lng, l.getLatLng().lat], l.getRadius(), {steps: 20, units: 'meters'});
+                }
+
+                let isHit = false;
+                try {
+                    if (turf.booleanIntersects(userGeo, targetGeo)) isHit = true;
+                    if (!isHit && userGeo.geometry.type === 'Point' && turf.booleanPointInPolygon(userGeo, targetGeo)) isHit = true;
+                } catch(e) {}
+
+                if (isHit) {
+                    const name = l.feature?.properties?.name || l.feature?.properties?.Name || "พื้นที่ไม่ระบุชื่อ";
+                    alerts.push(`<b>${typeName}:</b> ${name}`);
+                }
+            });
+        }
+
+        if (document.getElementById('toggleNFZ').checked) scanGroup(nfzLayerGroup, "เขตห้ามบิน (NFZ)");
+        if (document.getElementById('togglePark').checked) scanGroup(parkLayerGroup, "อุทยานแห่งชาติ");
+
+        if (alerts.length > 0) {
+            Swal.fire({
+                title: '⚠️ เตือนพื้นที่ทับซ้อน!',
+                html: `<div class="text-left text-sm"><b>"${sourceName}"</b> อยู่ในพื้นที่:<br><ul class="list-disc pl-5 text-red-600 mt-2">${alerts.map(a => `<li>${a}</li>`).join('')}</ul></div>`,
+                icon: 'warning',
+                confirmButtonColor: '#d33'
+            });
+        }
+    }
+
+    // --- 6. Search & Utils ---
+    const searchInput = document.getElementById('searchInput');
+    const searchResults = document.getElementById('searchResults');
+    let debounceTimer;
+    searchInput.addEventListener('input', function() {
+        clearTimeout(debounceTimer);
+        if (this.value.length < 3) { searchResults.style.display = 'none'; return; }
+        debounceTimer = setTimeout(() => fetchSearch(this.value), 500);
+    });
+    async function fetchSearch(q) {
+        try {
+            const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${q}&countrycodes=th&limit=5`);
+            const data = await res.json();
+            searchResults.innerHTML = '';
+            if(data.length === 0) return;
+            data.forEach(item => {
+                const d = document.createElement('div');
+                d.className = 'search-item';
+                d.innerText = item.display_name.split(',').slice(0,3).join(',');
+                d.onclick = () => selectLoc(item);
+                searchResults.appendChild(d);
+            });
+            searchResults.style.display = 'block';
+        } catch(e){}
+    }
+    function selectLoc(item) {
+        searchResults.style.display = 'none';
+        searchInput.value = item.display_name;
+        const lat = parseFloat(item.lat), lon = parseFloat(item.lon);
+        map.setView([lat, lon], 13);
+        L.marker([lat, lon]).addTo(drawnItems).bindPopup(item.display_name).openPopup();
+        checkOverlap(turf.point([lon, lat]), "ผลการค้นหา");
+    }
+    window.manualSearch = () => fetchSearch(searchInput.value); // Simple trigger
+    window.toggleLayer = (t) => {
+        const g = t==='nfz'?nfzLayerGroup:parkLayerGroup;
+        if(map.hasLayer(g)) map.removeLayer(g); else map.addLayer(g);
+    };
+    window.locateUser = () => map.locate({setView:true, maxZoom:14});
+    map.on('locationfound', e => {
+        L.marker(e.latlng).addTo(map).bindPopup("ฉันอยู่ที่นี่").openPopup();
+        checkOverlap(turf.point([e.latlng.lng, e.latlng.lat]), "ตำแหน่งปัจจุบัน");
+    });
+    map.on('mousemove', e => document.getElementById('mouse-coords').innerText = `Lat: ${e.latlng.lat.toFixed(4)}, Lon: ${e.latlng.lng.toFixed(4)}`);
+    document.addEventListener('click', e => { if(!searchInput.contains(e.target)) searchResults.style.display='none'; });
+
+</script>
+</body>
+</html>
