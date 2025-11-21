@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Thailand Drone Map Pro (Fixed Names)</title>
+    <title>Thailand Drone Map Pro (V.5 Smart Name Fix)</title>
 
     <!-- Leaflet & Plugins -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -11,6 +11,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600&display=swap" rel="stylesheet">
 
     <style>
         body, html { height: 100%; width: 100%; margin: 0; overflow: hidden; font-family: 'Sarabun', sans-serif; }
@@ -84,7 +85,7 @@
             </div>
             
             <div class="text-[10px] text-gray-400 mt-2 italic text-center">
-                แก้ไขการแสดงผลชื่อ: รองรับ name_th แล้ว
+                ระบบตรวจสอบชื่อ: Smart Property Detection Active
             </div>
         </div>
         
@@ -128,12 +129,34 @@
     });
     map.addControl(drawControl);
 
-    // --- HELPER FUNCTION: Get Name Safely ---
-    // นี่คือฟังก์ชันใหม่ที่ช่วยดึงชื่อภาษาไทยครับ
+    // --- SMART HELPER FUNCTION: Get Name Safely (V5) ---
+    // ฟังก์ชันนี้จะพยายามหา Key ที่น่าจะเป็นชื่อให้เจอ ไม่ว่ามันจะเขียนว่า name_th, Name, NAME_TH หรืออื่นๆ
     function getFeatureName(props) {
         if (!props) return "ไม่ระบุชื่อ";
-        // ลองหา name_th ก่อน -> ถ้าไม่มีหา Name -> ถ้าไม่มีหา name
-        return props.name_th || props.Name || props.name || "ไม่ระบุชื่อ";
+
+        // 1. ลองหาตรงๆ ตามที่คุณบอกมาก่อน (Priority สูงสุด)
+        if (props.name_th) return props.name_th;
+        if (props.NAME_TH) return props.NAME_TH;
+        if (props.Name_th) return props.Name_th;
+
+        // 2. ถ้าไม่เจอ ให้วนลูปหาทุก key ที่มีคำว่า "name" หรือ "ชื่อ"
+        const keys = Object.keys(props);
+        for (let key of keys) {
+            const lowerKey = key.toLowerCase();
+            if (lowerKey.includes('name') || lowerKey.includes('ชื่อ')) {
+                // ตรวจสอบว่าค่าข้างในไม่ใช่ค่าว่าง
+                if (props[key] && typeof props[key] === 'string' && props[key].trim() !== "") {
+                    return props[key];
+                }
+            }
+        }
+
+        // 3. ถ้ายังไม่เจอ ลองหา Key ภาษาไทยยอดฮิต
+        if (props['ชื่อสถานที่']) return props['ชื่อสถานที่'];
+        
+        // 4. Fallback
+        console.log("หาชื่อไม่เจอใน Properties นี้:", props);
+        return "ไม่ระบุชื่อ (ตรวจสอบ Console)";
     }
 
     async function loadLayerData(url, layerGroup, style, statusId, typeName) {
@@ -147,21 +170,19 @@
             const geoJsonLayer = L.geoJSON(data, {
                 style: style,
                 onEachFeature: (feature, layer) => {
-                    const name = getFeatureName(feature.properties); // เรียกใช้ฟังก์ชันดึงชื่อ
-                    layer.bindPopup(`<b>${typeName}</b><br>${name}`);
+                    const name = getFeatureName(feature.properties);
+                    layer.bindPopup(`<div class="text-center font-sarabun"><b>${typeName}</b><br><span class="text-lg font-bold text-blue-600">${name}</span></div>`);
                 }
             });
             
             layerGroup.clearLayers();
             layerGroup.addLayer(geoJsonLayer);
-            
             statusEl.className = 'status-dot status-success';
             statusEl.title = "โหลดข้อมูลสำเร็จ";
 
         } catch (error) {
             console.error(`Failed to load ${typeName}:`, error);
             statusEl.className = 'status-dot status-error';
-            statusEl.title = "ไม่พบไฟล์ข้อมูล";
             if (typeName === 'No Fly Zone') loadFallbackNFZ();
         }
     }
@@ -172,9 +193,7 @@
     function loadFallbackNFZ() {
         const airports = [
             {name: "Suvarnabhumi Airport", lat: 13.6900, lon: 100.7501},
-            {name: "Don Mueang Airport", lat: 13.9125, lon: 100.6042},
-            {name: "Chiang Mai Airport", lat: 18.7677, lon: 98.9640},
-            {name: "Phuket Airport", lat: 8.1132, lon: 98.3169}
+            {name: "Don Mueang Airport", lat: 13.9125, lon: 100.6042}
         ];
         airports.forEach(apt => {
             const circle = L.circle([apt.lat, apt.lon], { radius: 9000, ...styles.nfz });
@@ -201,9 +220,15 @@
         function scanGroup(group, typeName) {
             group.eachLayer(l => {
                 let targetGeo;
+                // ดึง GeoJSON และ Properties อย่างระมัดระวัง
                 if (l.toGeoJSON) targetGeo = l.toGeoJSON();
                 if (l instanceof L.Circle) {
                      targetGeo = turf.circle([l.getLatLng().lng, l.getLatLng().lat], l.getRadius(), {steps: 20, units: 'meters'});
+                }
+
+                // สำคัญ: ต้องแน่ใจว่า Properties ติดมากับ targetGeo
+                if (l.feature && l.feature.properties) {
+                    targetGeo.properties = l.feature.properties;
                 }
 
                 let isHit = false;
@@ -213,8 +238,8 @@
                 } catch(e) {}
 
                 if (isHit) {
-                    // ใช้ฟังก์ชันดึงชื่อเดียวกัน เพื่อให้แจ้งเตือนเป็นภาษาไทย
-                    const name = getFeatureName(l.feature?.properties); 
+                    // ใช้ฟังก์ชันอัจฉริยะตัวเดิม
+                    const name = getFeatureName(targetGeo.properties || l.feature?.properties); 
                     alerts.push(`<b>${typeName}:</b> ${name}`);
                 }
             });
@@ -226,7 +251,7 @@
         if (alerts.length > 0) {
             Swal.fire({
                 title: '⚠️ เตือนพื้นที่ทับซ้อน!',
-                html: `<div class="text-left text-sm"><b>"${sourceName}"</b> อยู่ในพื้นที่:<br><ul class="list-disc pl-5 text-red-600 mt-2">${alerts.map(a => `<li>${a}</li>`).join('')}</ul></div>`,
+                html: `<div class="text-left text-sm"><b>"${sourceName}"</b> อยู่ในพื้นที่:<br><ul class="list-disc pl-5 text-red-600 mt-2 font-bold">${alerts.map(a => `<li>${a}</li>`).join('')}</ul></div>`,
                 icon: 'warning',
                 confirmButtonColor: '#d33'
             });
