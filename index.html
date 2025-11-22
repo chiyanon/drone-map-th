@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Thailand Drone Map Pro (V.8 Strict Unique)</title>
+    <title>Thailand Drone Map Pro (V.9 MultiPolygon Support)</title>
 
     <!-- Leaflet & Plugins -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -61,6 +61,7 @@
             <div class="bg-slate-50 p-3 rounded-lg border border-slate-200">
                 <h3 class="font-bold text-sm text-gray-700 mb-2 border-b pb-1">ชั้นข้อมูล (Layers)</h3>
                 
+                <!-- NFZ -->
                 <div class="flex items-center justify-between mb-2">
                     <label class="flex items-center cursor-pointer">
                         <input type="checkbox" id="toggleNFZ" checked onchange="toggleLayer('nfz')" class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500">
@@ -72,6 +73,7 @@
                     </div>
                 </div>
 
+                <!-- Parks -->
                 <div class="flex items-center justify-between">
                     <label class="flex items-center cursor-pointer">
                         <input type="checkbox" id="togglePark" checked onchange="toggleLayer('park')" class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500">
@@ -85,7 +87,7 @@
             </div>
             
             <div class="text-[10px] text-gray-400 mt-2 italic text-center">
-                System Status: V.8 Enhanced Deduplication
+                System Status: V.9 MultiPolygon Ready
             </div>
         </div>
         
@@ -129,42 +131,41 @@
     });
     map.addControl(drawControl);
 
-    // --- V8: Aggressive Name Cleaning ---
+    // --- V9: Smart Name Extraction (Supports "Name") ---
     function getFeatureName(props) {
         if (!props) return "ไม่ระบุชื่อ";
         
-        let rawName = null;
-        if (props.name_th) rawName = props.name_th;
-        else if (props.NAME_TH) rawName = props.NAME_TH;
-        else if (props.Name) rawName = props.Name;
-        else if (props.name) rawName = props.name;
+        // 1. ตรวจสอบ "Name" (จากไฟล์ nfz ของคุณ) เป็นอันดับแรก
+        if (props.Name) return String(props.Name).trim();
         
-        if (!rawName) {
-             // Search keys
-            const keys = Object.keys(props);
-            for (let key of keys) {
-                const lowerKey = key.toLowerCase();
-                if ((lowerKey.includes('name') || lowerKey.includes('ชื่อ')) && props[key]) {
-                    rawName = props[key];
-                    break;
-                }
+        // 2. ตรวจสอบชื่ออื่นๆ ตามลำดับ
+        if (props.name_th) return String(props.name_th).trim();
+        if (props.NAME_TH) return String(props.NAME_TH).trim();
+        if (props.name) return String(props.name).trim();
+
+        // 3. วนลูปหา key ที่มีคำว่า name
+        const keys = Object.keys(props);
+        for (let key of keys) {
+            const lowerKey = key.toLowerCase();
+            if ((lowerKey.includes('name') || lowerKey.includes('ชื่อ')) && props[key]) {
+                 return String(props[key]).trim();
             }
-        }
-        
-        // Clean it up!
-        if (rawName) {
-            return String(rawName).trim().replace(/\s+/g, ' ');
         }
         return "ไม่ระบุชื่อ";
     }
 
+    // --- V9: Robust Data Loading with Anti-Cache & Error Handling ---
     async function loadLayerData(url, layerGroup, style, statusId, typeName) {
         const statusEl = document.getElementById(statusId);
         try {
-            const response = await fetch(url);
+            // Anti-Cache: เพิ่ม timestamp เพื่อบังคับโหลดไฟล์ใหม่เสมอ
+            const fetchUrl = `${url}?t=${new Date().getTime()}`;
+            
+            const response = await fetch(fetchUrl);
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             
-            const data = await response.json();
+            const data = await response.json(); // ถ้าไฟล์ JSON เสีย จะ Error ตรงนี้
+            
             layerGroup.clearLayers();
 
             L.geoJSON(data, {
@@ -178,25 +179,38 @@
             
             statusEl.className = 'status-dot status-success';
             statusEl.title = "โหลดข้อมูลสำเร็จ";
+            console.log(`${typeName} Loaded Successfully.`);
 
         } catch (error) {
             console.error(`Failed to load ${typeName}:`, error);
             statusEl.className = 'status-dot status-error';
-            if (typeName === 'No Fly Zone') loadFallbackNFZ();
+            statusEl.title = "โหลดไม่สำเร็จ (คลิกเพื่อดูรายละเอียด)";
+            
+            // แจ้งเตือน Popup ถ้าโหลดไม่ได้ (เฉพาะ NFZ ที่สำคัญ)
+            if (typeName === 'No Fly Zone') {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'โหลดไฟล์ NFZ ไม่สำเร็จ',
+                    text: 'กรุณาตรวจสอบไฟล์ nfz.json ว่าเป็น JSON ที่ถูกต้องหรือไม่',
+                    footer: `<small class="text-red-500">${error.message}</small>`
+                });
+                // ไม่โหลด Fallback อัตโนมัติ เพื่อให้ผู้ใช้รู้ว่าข้อมูลจริงไม่มา
+                // แต่ถ้าอยากให้แผนที่ไม่โล่ง สามารถเปิด loadFallbackNFZ() ได้
+                // loadFallbackNFZ(); 
+            }
         }
     }
 
+    // เรียกโหลดข้อมูล
     loadLayerData('data/nfz.json', nfzLayerGroup, styles.nfz, 'status-nfz', 'No Fly Zone');
     loadLayerData('data/parks.json', parkLayerGroup, styles.park, 'status-park', 'อุทยานแห่งชาติ');
 
+    // ฟังก์ชัน Fallback (ปิดไว้ก่อนเพื่อให้รู้ว่าไฟล์จริงมาหรือไม่)
     function loadFallbackNFZ() {
-        const airports = [
-            {name: "Suvarnabhumi Airport", lat: 13.6900, lon: 100.7501},
-            {name: "Don Mueang Airport", lat: 13.9125, lon: 100.6042}
-        ];
+        const airports = [{name: "Suvarnabhumi Airport", lat: 13.6900, lon: 100.7501}];
         airports.forEach(apt => {
             const circle = L.circle([apt.lat, apt.lon], { radius: 9000, ...styles.nfz });
-            circle.feature = { type: "Feature", properties: { name: apt.name }, geometry: { type: "Polygon" } };
+            circle.feature = { type: "Feature", properties: { Name: apt.name }, geometry: { type: "Polygon" } };
             circle.bindPopup(`<b>No Fly Zone (Demo)</b><br>${apt.name}`);
             nfzLayerGroup.addLayer(circle);
         });
@@ -214,37 +228,52 @@
         checkOverlap(geoJson, "พื้นที่วาดใหม่");
     });
 
-    // --- V8: Strict Deduplication ---
+    // --- V9: Check Overlap (MultiPolygon Support) ---
     function checkOverlap(userGeo, sourceName) {
         let alerts = new Set(); 
 
         function scanGroup(group, typeName) {
             group.eachLayer(l => {
                 let targetGeo;
+                
+                // แปลง Layer เป็น GeoJSON
                 if (l.toGeoJSON) targetGeo = l.toGeoJSON();
                 if (l instanceof L.Circle) {
                      targetGeo = turf.circle([l.getLatLng().lng, l.getLatLng().lat], l.getRadius(), {steps: 20, units: 'meters'});
                 }
+
+                // แนบ Properties ให้ถูกต้อง
                 if (l.feature && l.feature.properties) {
                     targetGeo.properties = l.feature.properties;
                 }
 
                 let isHit = false;
                 try {
+                    // 1. เช็คการตัดกัน (Intersects) - รองรับ MultiPolygon
                     if (turf.booleanIntersects(userGeo, targetGeo)) isHit = true;
-                    if (!isHit && userGeo.geometry.type === 'Point' && turf.booleanPointInPolygon(userGeo, targetGeo)) isHit = true;
-                } catch(e) {}
+                    
+                    // 2. เช็คจุดในพื้นที่ (Point in Polygon)
+                    // หมายเหตุ: booleanPointInPolygon รองรับ Polygon และ MultiPolygon
+                    if (!isHit && userGeo.geometry.type === 'Point') {
+                         if (turf.booleanPointInPolygon(userGeo, targetGeo)) isHit = true;
+                    }
+                    
+                    // 3. เช็คพื้นที่ทับซ้อน (Overlap) - สำหรับ Polygon ทับกัน
+                    if (!isHit && userGeo.geometry.type === 'Polygon' && (targetGeo.geometry.type === 'Polygon' || targetGeo.geometry.type === 'MultiPolygon')) {
+                        if (turf.booleanOverlap(userGeo, targetGeo)) isHit = true;
+                    }
+
+                } catch(e) {
+                    // หากเกิด Error ทางคณิตศาสตร์ ให้ข้ามไป (ป้องกันเว็บค้าง)
+                    console.warn("Overlap Check Warning:", e);
+                }
 
                 if (isHit) {
-                    // ใช้ฟังก์ชันทำความสะอาดชื่อที่เข้มงวดขึ้น
                     const name = getFeatureName(targetGeo.properties); 
-                    
-                    // สร้าง Key ที่ไม่ซ้ำแน่นอน
                     const alertString = `<b>${typeName}:</b> ${name}`;
-                    
                     if (!alerts.has(alertString)) {
                         alerts.add(alertString);
-                        console.log(`Hit Detected: ${name}`); // Debug Log
+                        console.log(`Hit: ${name}`);
                     }
                 }
             });
